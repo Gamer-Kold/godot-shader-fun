@@ -1,0 +1,220 @@
+[gd_scene load_steps=11 format=2]
+
+[ext_resource path="res://src/outline.gdshader" type="Shader" id=1]
+[ext_resource path="res://assets/palette_mono.png" type="Texture" id=3]
+[ext_resource path="res://assets/bayer8tile4.png" type="Texture" id=4]
+[ext_resource path="res://src/camera.gd" type="Script" id=5]
+
+[sub_resource type="QuadMesh" id=9]
+flip_faces = true
+size = Vector2( 2, 2 )
+
+[sub_resource type="Shader" id=21]
+code = "shader_type spatial;
+render_mode unshaded;
+
+uniform sampler2D u_dither_tex;
+uniform sampler2D u_color_tex;
+
+uniform int u_bit_depth;
+uniform float u_contrast;
+uniform float u_offset;
+uniform int u_dither_size;
+
+void vertex() {
+	POSITION = vec4(VERTEX, 1.0);
+}
+
+void fragment() 
+{
+	// sample the screen texture at the desired output resolution (according to u_dither_size)
+	// this will effectively pixelate the resulting output
+	vec2 screen_size = VIEWPORT_SIZE / float(u_dither_size);
+	vec2 screen_sample_uv = floor(SCREEN_UV * screen_size) / screen_size;
+	vec3 screen_col = texture(SCREEN_TEXTURE, screen_sample_uv).rgb;
+	
+	// calculate pixel luminosity (https://stackoverflow.com/questions/596216/formula-to-determine-brightness-of-rgb-color)
+	float lum = (screen_col.r * 0.299) + (screen_col.g * 0.587) + (screen_col.b * 0.114);
+	
+	// adjust with contrast and offset parameters
+	float contrast = u_contrast;
+	lum = (lum - 0.5 + u_offset) * contrast + 0.5;
+	lum = clamp(lum, 0.0, 1.0);
+	
+	// reduce luminosity bit depth to give a more banded visual if desired	
+	float bits = float(u_bit_depth);
+	lum = floor(lum * bits) / bits;
+	
+	// to support multicolour palettes, we want to dither between the two colours on the palette
+	// which are adjacent to the current pixel luminosity.
+	// to do this, we need to determine which 'band' lum falls into, calculate the upper and lower
+	// bound of that band, then later we will use the dither texture to pick either the upper or 
+	// lower colour.
+	
+	// get the palette texture size mapped so it is 1px high (so the x value however many colour bands there are)
+	ivec2 col_size = textureSize(u_color_tex, 0);
+	col_size /= col_size.y;
+	
+	float col_x = float(col_size.x) - 1.0; // colour boundaries is 1 less than the number of colour bands
+	float col_texel_size = 1.0 / col_x; // the size of one colour boundary
+	
+	lum = max(lum - 0.00001, 0.0); // makes sure our floor calculation below behaves when lum == 1.0
+	float lum_lower = floor(lum * col_x) * col_texel_size;
+	float lum_upper = (floor(lum * col_x) + 1.0) * col_texel_size;
+	float lum_scaled = lum * col_x - floor(lum * col_x); // calculates where lum lies between the upper and lower bound
+	
+	// map the dither texture onto the screen. there are better ways of doing this that makes the dither pattern 'stick'
+	// with objects in the 3D world, instead of being mapped onto the screen. see lucas pope's details posts on how he 
+	// achieved this in Obra Dinn: https://forums.tigsource.com/index.php?topic=40832.msg1363742#msg1363742
+	ivec2 noise_size = textureSize(u_dither_tex, 0);
+	vec2 inv_noise_size = vec2(1.0 / float(noise_size.x), 1.0 / float(noise_size.y));
+	vec2 noise_uv = SCREEN_UV * inv_noise_size * vec2(float(screen_size.x), float(screen_size.y));
+	float threshold = texture(u_dither_tex, noise_uv).r;
+	
+	// adjust the dither slightly so min and max aren't quite at 0.0 and 1.0
+	// otherwise we wouldn't get fullly dark and fully light dither patterns at lum 0.0 and 1.0
+	threshold = threshold * 0.99 + 0.005;
+	
+	// the lower lum_scaled is, the fewer pixels will be below the dither threshold, and thus will use the lower bound colour,
+	// and vice-versa
+	float ramp_val = lum_scaled < threshold ? 0.1f : 0.9f;
+	// sample at the lower bound colour if ramp_val is 0.0, upper bound colour if 1.0
+	float col_sample = mix(lum_lower, lum_upper, ramp_val);
+	vec3 final_col = texture(u_color_tex, vec2(col_sample, 0.5)).rgb;
+	
+//	if (length(abs(final_col - vec3(0))) < 0.5){
+//		final_col = vec3(0);
+//	}
+//	else{
+//		final_col = vec3(1);
+//	}
+	final_col = lum_scaled < threshold ? vec3(0) : vec3(1);
+	
+	// return the final colour!
+	ALBEDO = final_col;
+}"
+
+[sub_resource type="ShaderMaterial" id=22]
+shader = SubResource( 21 )
+shader_param/u_bit_depth = 64
+shader_param/u_contrast = 3.341
+shader_param/u_offset = 0.0
+shader_param/u_dither_size = 1
+shader_param/u_dither_tex = ExtResource( 4 )
+shader_param/u_color_tex = ExtResource( 3 )
+
+[sub_resource type="ShaderMaterial" id=23]
+shader = ExtResource( 1 )
+
+[sub_resource type="PlaneMesh" id=2]
+size = Vector2( 25, 21.48 )
+center_offset = Vector3( 0, 0, -11.164 )
+
+[sub_resource type="PlaneMesh" id=24]
+size = Vector2( 25, 10 )
+
+[node name="Demo" type="Spatial"]
+
+[node name="ViewportContainer2" type="ViewportContainer" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+stretch = true
+
+[node name="Viewport" type="Viewport" parent="ViewportContainer2"]
+size = Vector2( 175, 100 )
+handle_input_locally = false
+render_target_update_mode = 3
+
+[node name="ViewportContainer" type="ViewportContainer" parent="ViewportContainer2/Viewport"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+stretch = true
+
+[node name="Viewport" type="Viewport" parent="ViewportContainer2/Viewport/ViewportContainer"]
+size = Vector2( 175, 100 )
+handle_input_locally = false
+hdr = false
+render_target_update_mode = 3
+shadow_atlas_size = 1024
+
+[node name="Camera" type="Camera" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.381, 6.096 )
+script = ExtResource( 5 )
+
+[node name="Dither" type="MeshInstance" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Camera"]
+transform = Transform( 2, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0 )
+extra_cull_margin = 16384.0
+mesh = SubResource( 9 )
+material/0 = SubResource( 22 )
+
+[node name="Outlines" type="MeshInstance" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Camera"]
+transform = Transform( 2, 0, 0, 0, 2, 0, 0, 0, 1, 0.00310946, -0.00642967, 0.00355291 )
+sorting_offset = 0.014
+extra_cull_margin = 16384.0
+mesh = SubResource( 9 )
+material/0 = SubResource( 23 )
+
+[node name="OmniLight" type="OmniLight" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Camera"]
+omni_range = 500.0
+omni_attenuation = 36.7584
+
+[node name="Primitives" type="Spatial" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport"]
+
+[node name="Plane" type="MeshInstance" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1.64048, 0, 0, 0, 1, 0, 0, 0, 1, 1.06727, -1.03621, 6.23899 )
+mesh = SubResource( 2 )
+
+[node name="Plane2" type="MeshInstance" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1.7398, 0, 0, 0, 0.943613, -0.334522, 0, 0.334522, 0.943613, 1.77933, 0.384642, -19.8774 )
+mesh = SubResource( 24 )
+
+[node name="CSGCylinder" type="CSGCylinder" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -7.848, 4.877, -1.59538 )
+height = 9.847
+
+[node name="CSGCylinder2" type="CSGCylinder" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 7.899, 4.877, -1.59538 )
+height = 9.847
+
+[node name="CSGCylinder3" type="CSGCylinder" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -7.848, 4.877, -6.46113 )
+height = 9.847
+
+[node name="CSGCylinder4" type="CSGCylinder" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 7.899, 4.877, -6.46113 )
+height = 9.847
+
+[node name="CSGCylinder5" type="CSGCylinder" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -7.848, 4.877, -10.1454 )
+height = 9.847
+
+[node name="CSGCylinder6" type="CSGCylinder" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 7.899, 4.877, -10.1454 )
+height = 9.847
+
+[node name="OmniLight" type="OmniLight" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.19412, -29.9366 )
+light_energy = 1.394
+
+[node name="CSGBox" type="CSGBox" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.14902, -30.9728 )
+width = 6.325
+depth = 7.455
+
+[node name="CSGBox2" type="CSGBox" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 5.79206, -30.7879 )
+width = 0.5
+height = 3.0
+depth = 0.5
+
+[node name="CSGBox3" type="CSGBox" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.40942, -30.7879 )
+width = 0.7
+height = 0.1
+depth = 0.7
+
+[node name="CSGBox4" type="CSGBox" parent="ViewportContainer2/Viewport/ViewportContainer/Viewport/Primitives"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7.50081, -30.7879 )
+width = 0.2
+height = 0.5
+depth = 0.2

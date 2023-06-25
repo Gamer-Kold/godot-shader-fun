@@ -1,0 +1,98 @@
+[gd_scene load_steps=10 format=2]
+
+[ext_resource path="res://shader/dither.shader" type="Shader" id=1]
+[ext_resource path="res://assets/palette_mono.png" type="Texture" id=2]
+[ext_resource path="res://assets/bayer16tile2.png" type="Texture" id=3]
+
+[sub_resource type="ShaderMaterial" id=3]
+shader = ExtResource( 1 )
+shader_param/u_bit_depth = 32
+shader_param/u_contrast = 1.0
+shader_param/u_offset = null
+shader_param/u_dither_size = 2
+shader_param/u_dither_tex = ExtResource( 3 )
+shader_param/u_color_tex = ExtResource( 2 )
+
+[sub_resource type="QuadMesh" id=4]
+flip_faces = true
+size = Vector2( 2, 2 )
+
+[sub_resource type="Shader" id=7]
+code = "shader_type spatial;
+render_mode unshaded;
+void vertex() {
+  POSITION = vec4(VERTEX, 1.0);
+}
+
+void fragment() {
+  float depth = texture(DEPTH_TEXTURE, SCREEN_UV).x;
+  
+  vec3 ndc1 = vec3(SCREEN_UV, depth) * 2.0 - 1.0;
+  vec4 view1 = INV_PROJECTION_MATRIX * vec4(ndc1, 1.0);
+  view1.xyz /= view1.w;
+  float linear_depth1 = (-view1.z);
+
+  vec2 screenPos = SCREEN_UV * VIEWPORT_SIZE; 
+  vec2 secondUV = (screenPos + vec2(1.0, 1.0)) / VIEWPORT_SIZE;
+
+  float depth2 = texture(DEPTH_TEXTURE, secondUV).x;
+  
+  vec3 ndc2 = vec3(secondUV, depth2) * 2.0 - 1.0;
+  vec4 view2 = INV_PROJECTION_MATRIX * vec4(ndc2, 1.0);
+  view2.xyz /= view2.w;
+  float linear_depth2 = (-view2.z);
+
+  if(abs(linear_depth1 - linear_depth2) > 0.2){
+    ALBEDO = vec3(0);
+  }
+  else{
+    ALBEDO = texture(SCREEN_TEXTURE, SCREEN_UV).rgb;
+  }
+  
+}
+"
+
+[sub_resource type="ShaderMaterial" id=6]
+shader = SubResource( 7 )
+
+[sub_resource type="QuadMesh" id=1]
+
+[sub_resource type="SpatialMaterial" id=2]
+
+[node name="Normal" type="Spatial"]
+
+[node name="ViewportContainer" type="ViewportContainer" parent="."]
+material = SubResource( 3 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+stretch = true
+
+[node name="Viewport" type="Viewport" parent="ViewportContainer"]
+handle_input_locally = false
+hdr = false
+render_target_update_mode = 3
+shadow_atlas_size = 1024
+
+[node name="Camera" type="Camera" parent="ViewportContainer/Viewport"]
+transform = Transform( 1, 0, 0, 0, 0.951862, 0.306526, 0, -0.306526, 0.951862, 0, 3.75253, 6.18671 )
+current = true
+
+[node name="MeshInstance" type="MeshInstance" parent="ViewportContainer/Viewport/Camera"]
+transform = Transform( 2, 0, 0, 0, 2, 0, 0, 0, 1, 0, 0, 0 )
+extra_cull_margin = 16384.0
+mesh = SubResource( 4 )
+material/0 = SubResource( 6 )
+
+[node name="CSGBox" type="CSGBox" parent="ViewportContainer/Viewport"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, 2.19442, 0.629439, 0 )
+
+[node name="CSGSphere" type="CSGSphere" parent="ViewportContainer/Viewport"]
+transform = Transform( 1, 0, 0, 0, 1, 0, 0, 0, 1, -1.57083, 1.34304, 1.35671 )
+
+[node name="CSGMesh" type="CSGMesh" parent="ViewportContainer/Viewport"]
+transform = Transform( 15.0523, 0, 0, 0, -4.37114e-08, 1, 0, -12.0053, -5.2477e-07, 0, 0, 0 )
+mesh = SubResource( 1 )
+material = SubResource( 2 )
+
+[node name="DirectionalLight" type="DirectionalLight" parent="ViewportContainer/Viewport"]
+transform = Transform( 1, 0, 0, 0, -0.713055, 0.701108, 0, -0.701108, -0.713055, 0, 3.26386, -3.40572 )
